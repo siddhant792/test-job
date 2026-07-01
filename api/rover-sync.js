@@ -360,4 +360,4 @@ async function GET(request) {
   }
 }
 
-module.exports = { GET };
+module.exports = { GET, runRoverSync };
