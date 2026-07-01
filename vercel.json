@@ -3,7 +3,7 @@
   "crons": [
     {
       "path": "/api/rover-sync",
-      "schedule": "0 2 * * *"
+      "schedule": "3 1 * * *"
     }
   ]
 }
