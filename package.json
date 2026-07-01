@@ -3,6 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "postinstall": "playwright install chromium",
     "rover-sync": "node api/rover-sync.js"
   },
   "dependencies": {
