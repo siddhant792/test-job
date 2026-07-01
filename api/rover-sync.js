@@ -382,7 +382,7 @@ async function runRoverSync() {
     auth: { persistSession: false }
   });
 
-  const vercelChromiumPath = '/usr/bin/chromium';
+  const vercelChromiumPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/tmp/chromium/chrome';
   const launchOptions = { headed: false };
 
   if (fs.existsSync(vercelChromiumPath)) {
