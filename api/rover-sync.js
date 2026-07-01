@@ -1,5 +1,6 @@
 const { chromium } = require('playwright');
 const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
 
 const ROVER_MRE_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/MREApprovals/';
 const ROVER_SEV_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/SEVApprovals/';
@@ -381,7 +382,14 @@ async function runRoverSync() {
     auth: { persistSession: false }
   });
 
-  const browser = await chromium.launch({ headed: false });
+  const vercelChromiumPath = '/usr/bin/chromium';
+  const launchOptions = { headed: false };
+
+  if (fs.existsSync(vercelChromiumPath)) {
+    launchOptions.executablePath = vercelChromiumPath;
+  }
+
+  const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage();
 
   try {
