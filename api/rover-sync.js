@@ -1,4 +1,3 @@
-const { chromium } = require('playwright');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 
@@ -7,6 +6,9 @@ const ROVER_SEV_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApp
 const PAGE_TIMEOUT_MS = 60000;
 const SEV_TOKEN_PATTERN = /SEV-\d+/gi;
 const UNDER_REVIEW_LABEL = 'Under review';
+const FETCH_HEADERS = {
+  'user-agent': 'Mozilla/5.0 (compatible; RoverSync/1.0; +https://vercel.com)'
+};
 
 const FILTER_LABELS = {
   MRE: {
@@ -31,158 +33,65 @@ const summarizeList = (values, limit = 25) => {
   return [...values.slice(0, limit), `...and ${values.length - limit} more`];
 };
 
-const waitForGridRows = async (page, linkPattern) => {
-  await page.waitForFunction(
-    (pattern) =>
-      Array.from(document.querySelectorAll('a[href]')).some((a) =>
-        a.getAttribute('href')?.includes(pattern)
-      ),
-    linkPattern,
-    { timeout: PAGE_TIMEOUT_MS }
-  );
-};
-
-const waitForGridRefreshAfterFilter = async (page) => {
-  await page.waitForTimeout(800);
-  await page.waitForLoadState('networkidle', { timeout: PAGE_TIMEOUT_MS }).catch(() => undefined);
-  await page.waitForFunction(
-    () => {
-      const spinners = document.querySelectorAll(
-        '.loading-overlay, .entity-list-loading, [class*="loading"]:not([class*="unloading"])'
-      );
-      return !Array.from(spinners).some((el) => el.offsetParent !== null);
-    },
-    { timeout: PAGE_TIMEOUT_MS }
-  ).catch(() => undefined);
-};
-
-const clickFilterByLabel = async (page, label, logger) => {
-  const dropdownToggleSelectors = [
-    'button.btn-filter',
-    'button.dropdown-toggle[data-toggle="dropdown"]',
-    'a.dropdown-toggle[data-toggle="dropdown"]',
-    '[data-toggle="dropdown"]'
-  ];
-
-  let opened = false;
-  for (const sel of dropdownToggleSelectors) {
-    const toggle = page.locator(sel).first();
-    if (await toggle.count()) {
-      await toggle.click();
-      opened = true;
-      break;
-    }
+const fetchHtml = async (url) => {
+  const response = await fetch(url, { headers: FETCH_HEADERS });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
 
-  if (!opened) {
-    logger?.(`[filter] could not find dropdown toggle for label "${label}"`);
-    return false;
+  return response.text();
+};
+
+const resolveUrl = (href, baseUrl) => new URL(href, baseUrl).toString();
+
+const extractPageMappingsFromHtml = (html, baseUrl, linkPattern, underReviewLabel = '') => {
+  const mappings = [];
+  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+
+  for (const match of html.matchAll(anchorPattern)) {
+    const href = match[1] || '';
+    const text = match[2] || '';
+    const label = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+
+    if (!href.includes(linkPattern)) continue;
+    if (!label.startsWith('MRE-') && !label.startsWith('SEV-')) continue;
+
+    const surroundingText = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
+    const isUnderReview = underReviewLabel
+      ? surroundingText.toLowerCase().includes(underReviewLabel.toLowerCase())
+      : false;
+
+    mappings.push({
+      approvalNumber: label,
+      roverUrl: resolveUrl(href, baseUrl),
+      isUnderReview
+    });
   }
 
-  await page.waitForSelector('.dropdown-menu', { state: 'visible', timeout: 5000 }).catch(() => undefined);
-
-  const filterLink = page
-    .locator('.dropdown-menu a.filterlink, .dropdown-menu li a')
-    .filter({ hasText: label })
-    .first();
-
-  if (await filterLink.count()) {
-    await filterLink.click();
-    await waitForGridRefreshAfterFilter(page);
-    logger?.(`[filter] applied "${label}" via .filterlink`);
-    return true;
-  }
-
-  const fallback = page.getByText(label, { exact: true }).first();
-  if (await fallback.count()) {
-    await fallback.click();
-    await waitForGridRefreshAfterFilter(page);
-    logger?.(`[filter] applied "${label}" via text fallback`);
-    return true;
-  }
-
-  logger?.(`[filter] label "${label}" not found in dropdown`);
-  return false;
+  return mappings;
 };
 
-const extractCurrentPageMappings = async (page, linkPattern, underReviewLabel = '') => {
-  return page.evaluate(
-    ({ pattern, reviewLabel }) => {
-      const anchors = Array.from(document.querySelectorAll('a[href]'));
-      const mappings = [];
+const extractNextPageUrl = (html, baseUrl) => {
+  const nextLinkMatch = html.match(/<a\b[^>]*class=["'][^"']*entity-pager-next-link[^"']*["'][^>]*href=["']([^"']+)["'][^>]*aria-label=["']Next page["'][^>]*>/i)
+    || html.match(/<a\b[^>]*aria-label=["']Next page["'][^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*entity-pager-next-link[^"']*["'][^>]*>/i);
 
-      for (const anchor of anchors) {
-        const href = anchor.getAttribute('href') || '';
-        const label = (anchor.textContent || '').trim().toUpperCase();
+  if (!nextLinkMatch) return null;
 
-        if (!href.includes(pattern)) continue;
-        if (!label.startsWith('MRE-') && !label.startsWith('SEV-')) continue;
+  const href = nextLinkMatch[1];
+  if (!href || href === '#') return null;
 
-        const cell = anchor.closest('td, [role="gridcell"]') || anchor.parentElement;
-        const cellText = (cell?.textContent || '').trim();
-        const isUnderReview = reviewLabel
-          ? cellText.toLowerCase().includes(reviewLabel.toLowerCase())
-          : false;
-
-        mappings.push({
-          approvalNumber: label,
-          roverUrl: new URL(href, window.location.origin).toString(),
-          isUnderReview
-        });
-      }
-
-      return mappings;
-    },
-    { pattern: linkPattern, reviewLabel: underReviewLabel }
-  );
+  return resolveUrl(href, baseUrl);
 };
 
-const getCurrentPageNumber = async (page) => {
-  return page.evaluate(() => {
-    const currentLink = Array.from(document.querySelectorAll('a[role="button"], button')).find(
-      (el) => el.getAttribute('aria-current') === 'page'
-    );
-    return currentLink ? Number(currentLink.textContent?.trim()) : 1;
-  });
-};
-
-const goToNextPage = async (page, currentPageNumber) => {
-  const nextPageState = await page.evaluate(() => {
-    const nextLink = document.querySelector('a.entity-pager-next-link[aria-label="Next page"]');
-    const parentItem = nextLink?.closest('li');
-    return {
-      exists: Boolean(nextLink),
-      disabled: parentItem?.classList.contains('disabled') ?? true
-    };
-  });
-
-  if (!nextPageState.exists || nextPageState.disabled) return false;
-
-  await page.locator('a.entity-pager-next-link[aria-label="Next page"]').click();
-  await page.waitForLoadState('networkidle', { timeout: PAGE_TIMEOUT_MS }).catch(() => undefined);
-  await page.waitForFunction(
-    (pageNumber) => {
-      const currentLink = Array.from(document.querySelectorAll('a[role="button"], button')).find(
-        (el) => el.getAttribute('aria-current') === 'page'
-      );
-      return Number(currentLink?.textContent?.trim()) > pageNumber;
-    },
-    currentPageNumber,
-    { timeout: PAGE_TIMEOUT_MS }
-  );
-  return true;
-};
-
-const collectMappings = async (page, startUrl, linkPattern, label, logger, underReviewLabel = '') => {
+const collectMappings = async (startUrl, linkPattern, label, logger, underReviewLabel = '') => {
   const mappings = new Map();
-
-  await waitForGridRows(page, linkPattern);
+  let currentUrl = startUrl;
 
   while (true) {
-    const currentPageNumber = await getCurrentPageNumber(page);
-    const pageMappings = await extractCurrentPageMappings(page, linkPattern, underReviewLabel);
+    const html = await fetchHtml(currentUrl);
+    const pageMappings = extractPageMappingsFromHtml(html, currentUrl, linkPattern, underReviewLabel);
 
-    logger(`[${label}] page ${currentPageNumber}: found ${pageMappings.length} links`);
+    logger(`[${label}] page: found ${pageMappings.length} links`);
 
     for (const mapping of pageMappings) {
       mappings.set(normalizeApprovalNumber(mapping.approvalNumber), {
@@ -191,10 +100,10 @@ const collectMappings = async (page, startUrl, linkPattern, label, logger, under
       });
     }
 
-    const moved = await goToNextPage(page, currentPageNumber);
-    if (!moved) break;
+    const nextUrl = extractNextPageUrl(html, currentUrl);
+    if (!nextUrl) break;
 
-    await waitForGridRows(page, linkPattern);
+    currentUrl = nextUrl;
   }
 
   logger(`[${label}] completed: ${mappings.size} unique mappings collected`);
@@ -202,7 +111,6 @@ const collectMappings = async (page, startUrl, linkPattern, label, logger, under
 };
 
 const collectMappingsForFilter = async (
-  page,
   startUrl,
   linkPattern,
   label,
@@ -210,28 +118,11 @@ const collectMappingsForFilter = async (
   logger,
   underReviewLabel = ''
 ) => {
-  await page.goto(startUrl, {
-    waitUntil: 'domcontentloaded',
-    timeout: PAGE_TIMEOUT_MS
-  });
-
-  await waitForGridRows(page, linkPattern);
-
-  if (filterLabel) {
-    const switched = await clickFilterByLabel(page, filterLabel, logger);
-    logger(
-      `[${label}] filter "${filterLabel}": ${switched ? 'applied' : 'not found — using default view'}`
-    );
-
-    if (switched) {
-      await waitForGridRows(page, linkPattern);
-    }
-  }
-
-  return collectMappings(page, page.url(), linkPattern, label, logger, underReviewLabel);
+  const url = filterLabel ? `${startUrl}?filter=${encodeURIComponent(filterLabel)}` : startUrl;
+  return collectMappings(url, linkPattern, label, logger, underReviewLabel);
 };
 
-const collectSevMappings = async (page, logger) => {
+const collectSevMappings = async (logger) => {
   const mappings = new Map();
 
   for (const [variantLabel, filterLabel] of [
@@ -240,7 +131,6 @@ const collectSevMappings = async (page, logger) => {
   ]) {
     logger(`Collecting Rover ${variantLabel} URLs...`);
     const variantMappings = await collectMappingsForFilter(
-      page,
       ROVER_SEV_LIST_URL,
       '/PublishedApprovals/SEVDetails/',
       variantLabel,
@@ -257,9 +147,8 @@ const collectSevMappings = async (page, logger) => {
   return mappings;
 };
 
-const collectMreMappings = async (page, logger) => {
+const collectMreMappings = async (logger) => {
   const activeMappings = await collectMappingsForFilter(
-    page,
     ROVER_MRE_LIST_URL,
     '/PublishedApprovals/ModelReportDetails/',
     'MRE active',
@@ -268,7 +157,6 @@ const collectMreMappings = async (page, logger) => {
   );
 
   const expandedMappings = await collectMappingsForFilter(
-    page,
     ROVER_MRE_LIST_URL,
     '/PublishedApprovals/ModelReportDetails/',
     'MRE all',
@@ -382,64 +270,49 @@ async function runRoverSync() {
     auth: { persistSession: false }
   });
 
-  const vercelChromiumPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/tmp/chromium/chrome';
-  const launchOptions = { headed: false };
+  console.log('Collecting Rover MRE URLs...');
+  const mreMappings = await collectMreMappings(console.log);
+  console.log(`Collected ${mreMappings.size} MRE mappings.`);
 
-  if (fs.existsSync(vercelChromiumPath)) {
-    launchOptions.executablePath = vercelChromiumPath;
+  const sevMappings = await collectSevMappings(console.log);
+  console.log(`Collected ${sevMappings.size} SEV mappings.`);
+
+  console.log('Updating customer_model_reports...');
+  const mrResult = await updateCustomerModelReports(
+    supabase,
+    'mr_approval',
+    'mr_approval_rover_url',
+    mreMappings
+  );
+  const sevResult = await updateCustomerModelReports(
+    supabase,
+    'sevs_entry',
+    'sevs_entry_rover_url',
+    sevMappings,
+    'sev_under_review'
+  );
+
+  if (mrResult.unmatchedApprovals.length > 0) {
+    console.log(
+      `[MRE] unmatched approvals (${mrResult.unmatchedApprovals.length}): ${summarizeList(mrResult.unmatchedApprovals).join(', ')}`
+    );
   }
 
-  const browser = await chromium.launch(launchOptions);
-  const page = await browser.newPage();
-
-  try {
-    console.log('Collecting Rover MRE URLs...');
-    const mreMappings = await collectMreMappings(page, console.log);
-    console.log(`Collected ${mreMappings.size} MRE mappings.`);
-
-    const sevMappings = await collectSevMappings(page, console.log);
-    console.log(`Collected ${sevMappings.size} SEV mappings.`);
-
-    console.log('Updating customer_model_reports...');
-    const mrResult = await updateCustomerModelReports(
-      supabase,
-      'mr_approval',
-      'mr_approval_rover_url',
-      mreMappings
+  if (sevResult.unmatchedApprovals.length > 0) {
+    console.log(
+      `[SEV] unmatched approvals (${sevResult.unmatchedApprovals.length}): ${summarizeList(sevResult.unmatchedApprovals).join(', ')}`
     );
-    const sevResult = await updateCustomerModelReports(
-      supabase,
-      'sevs_entry',
-      'sevs_entry_rover_url',
-      sevMappings,
-      'sev_under_review'
-    );
-
-    if (mrResult.unmatchedApprovals.length > 0) {
-      console.log(
-        `[MRE] unmatched approvals (${mrResult.unmatchedApprovals.length}): ${summarizeList(mrResult.unmatchedApprovals).join(', ')}`
-      );
-    }
-
-    if (sevResult.unmatchedApprovals.length > 0) {
-      console.log(
-        `[SEV] unmatched approvals (${sevResult.unmatchedApprovals.length}): ${summarizeList(sevResult.unmatchedApprovals).join(', ')}`
-      );
-    }
-
-    return {
-      message: 'Rover URLs synced successfully',
-      updatedMrApprovals: mrResult.updatedCount,
-      updatedSevsEntries: sevResult.updatedCount,
-      totalMrMappings: mreMappings.size,
-      totalSevMappings: sevMappings.size,
-      unmatchedMrApprovals: mrResult.unmatchedApprovals,
-      unmatchedSevsEntries: sevResult.unmatchedApprovals
-    };
-  } finally {
-    await page.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
   }
+
+  return {
+    message: 'Rover URLs synced successfully',
+    updatedMrApprovals: mrResult.updatedCount,
+    updatedSevsEntries: sevResult.updatedCount,
+    totalMrMappings: mreMappings.size,
+    totalSevMappings: sevMappings.size,
+    unmatchedMrApprovals: mrResult.unmatchedApprovals,
+    unmatchedSevsEntries: sevResult.unmatchedApprovals
+  };
 }
 
 async function GET(request) {
