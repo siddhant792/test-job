@@ -46,24 +46,32 @@ const resolveUrl = (href, baseUrl) => new URL(href, baseUrl).toString();
 
 const extractPageMappingsFromHtml = (html, baseUrl, linkPattern, underReviewLabel = '') => {
   const mappings = [];
-  const anchorPattern = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
 
-  for (const match of html.matchAll(anchorPattern)) {
-    const href = match[1] || '';
-    const text = match[2] || '';
-    const label = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  const rowPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  for (const rowMatch of html.matchAll(rowPattern)) {
+    const rowHtml = rowMatch[1] || '';
+    const rowText = rowHtml
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-    if (!href.includes(linkPattern)) continue;
-    if (!label.startsWith('MRE-') && !label.startsWith('SEV-')) continue;
+    const approvalMatch = rowText.match(/\b(MRE-\d+|SEV-\d+)\b/i);
+    if (!approvalMatch) continue;
 
-    const surroundingText = text.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim();
+    const approvalNumber = approvalMatch[1].toUpperCase();
+    if (!approvalNumber.startsWith('MRE-') && !approvalNumber.startsWith('SEV-')) continue;
+
     const isUnderReview = underReviewLabel
-      ? surroundingText.toLowerCase().includes(underReviewLabel.toLowerCase())
+      ? rowText.toLowerCase().includes(underReviewLabel.toLowerCase())
       : false;
 
+    const hrefMatch = rowHtml.match(/href=["']([^"']+)["']/i);
+    const roverUrl = hrefMatch ? resolveUrl(hrefMatch[1], baseUrl) : baseUrl;
+
     mappings.push({
-      approvalNumber: label,
-      roverUrl: resolveUrl(href, baseUrl),
+      approvalNumber,
+      roverUrl,
       isUnderReview
     });
   }
@@ -72,8 +80,8 @@ const extractPageMappingsFromHtml = (html, baseUrl, linkPattern, underReviewLabe
 };
 
 const extractNextPageUrl = (html, baseUrl) => {
-  const nextLinkMatch = html.match(/<a\b[^>]*class=["'][^"']*entity-pager-next-link[^"']*["'][^>]*href=["']([^"']+)["'][^>]*aria-label=["']Next page["'][^>]*>/i)
-    || html.match(/<a\b[^>]*aria-label=["']Next page["'][^>]*href=["']([^"']+)["'][^>]*class=["'][^"']*entity-pager-next-link[^"']*["'][^>]*>/i);
+  const nextLinkMatch = html.match(/<a\b[^>]*aria-label=["']Next page["'][^>]*href=["']([^"']+)["'][^>]*>/i)
+    || html.match(/<a\b[^>]*href=["']([^"']+)["'][^>]*aria-label=["']Next page["'][^>]*>/i);
 
   if (!nextLinkMatch) return null;
 
@@ -118,8 +126,7 @@ const collectMappingsForFilter = async (
   logger,
   underReviewLabel = ''
 ) => {
-  const url = filterLabel ? `${startUrl}?filter=${encodeURIComponent(filterLabel)}` : startUrl;
-  return collectMappings(url, linkPattern, label, logger, underReviewLabel);
+  return collectMappings(startUrl, linkPattern, label, logger, underReviewLabel);
 };
 
 const collectSevMappings = async (logger) => {
