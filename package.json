@@ -3,7 +3,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "rover-sync": "node scripts/sync-rover-urls.mjs"
+    "rover-sync": "node api/rover-sync.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.56.0",
