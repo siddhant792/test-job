@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
+const ws = require('ws');
 
 const ROVER_MRE_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/MREApprovals/';
 const ROVER_SEV_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/SEVApprovals/';
@@ -298,7 +299,7 @@ async function runRoverSync() {
 
   const supabase = createClient(supabaseUrl, supabaseSecretKey, {
     auth: { persistSession: false },
-    realtime: { enabled: false }
+    realtime: { enabled: false, transport: ws }
   });
 
   console.log('Collecting Rover MRE URLs...');
