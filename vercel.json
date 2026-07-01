@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/*.js": {
-      "runtime": "nodejs20"
+      "runtime": "nodejs20.x@1.0.0"
     }
   },
   "crons": [
