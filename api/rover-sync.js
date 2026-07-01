@@ -366,6 +366,8 @@ const updateCustomerModelReports = async (
 };
 
 async function runRoverSync() {
+  console.log('[rover-sync] start');
+
   const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || process.env.SUPABASE_URL;
   const supabaseSecretKey = process.env.SECRET_KEY_SUPABASE;
 
@@ -437,6 +439,7 @@ async function GET(request) {
     const result = await runRoverSync();
     return Response.json(result);
   } catch (error) {
+    console.error('[rover-sync] failed', error);
     return Response.json(
       {
         error: error instanceof Error ? error.message : String(error)
