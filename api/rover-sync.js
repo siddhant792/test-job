@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
+const chromium = require('@sparticuz/chromium-min');
+const puppeteer = require('puppeteer-core');
 
 const ROVER_MRE_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/MREApprovals/';
 const ROVER_SEV_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/SEVApprovals/';
@@ -9,6 +10,8 @@ const UNDER_REVIEW_LABEL = 'Under review';
 const FETCH_HEADERS = {
   'user-agent': 'Mozilla/5.0 (compatible; RoverSync/1.0; +https://vercel.com)'
 };
+
+const PUPPETEER_USER_AGENT = 'Mozilla/5.0 (compatible; RoverSync/1.0; +https://vercel.com)';
 
 const FILTER_LABELS = {
   MRE: {
@@ -40,6 +43,26 @@ const fetchHtml = async (url) => {
   }
 
   return response.text();
+};
+
+const fetchRenderedHtml = async (url) => {
+  const executablePath = await chromium.executablePath();
+  const browser = await puppeteer.launch({
+    args: chromium.args,
+    defaultViewport: chromium.defaultViewport,
+    executablePath,
+    headless: chromium.headless,
+    ignoreHTTPSErrors: true
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setUserAgent(PUPPETEER_USER_AGENT);
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForNetworkIdle({ idleTime: 1000, timeout: PAGE_TIMEOUT_MS }).catch(() => {});
+    return await page.content();
+  } finally {
+    await browser.close();
+  }
 };
 
 const resolveUrl = (href, baseUrl) => new URL(href, baseUrl).toString();
@@ -96,7 +119,7 @@ const collectMappings = async (startUrl, linkPattern, label, logger, underReview
   let currentUrl = startUrl;
 
   while (true) {
-    const html = await fetchHtml(currentUrl);
+    const html = await fetchRenderedHtml(currentUrl);
     const pageMappings = extractPageMappingsFromHtml(html, currentUrl, linkPattern, underReviewLabel);
 
     logger(`[${label}] page: found ${pageMappings.length} links`);
