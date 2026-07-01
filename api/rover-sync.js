@@ -287,7 +287,7 @@ const updateCustomerModelReports = async (
 async function runRoverSync() {
   console.log('[rover-sync] start');
 
-  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
   const supabaseSecretKey = process.env.SECRET_KEY_SUPABASE;
 
   if (!supabaseUrl || !supabaseSecretKey) {
