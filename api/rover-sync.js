@@ -1,5 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
-const chromium = require('@sparticuz/chromium-min');
+const chromium = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
 const ROVER_MRE_LIST_URL = 'https://www.rover.infrastructure.gov.au/PublishedApprovals/MREApprovals/';
