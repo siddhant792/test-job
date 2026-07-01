@@ -292,7 +292,7 @@ async function runRoverSync() {
 
   if (!supabaseUrl || !supabaseSecretKey) {
     throw new Error(
-      'Missing SUPABASE_URL/REACT_APP_SUPABASE_URL or SECRET_KEY_SUPABASE environment variables.'
+      'Missing REACT_APP_SUPABASE_URL or SECRET_KEY_SUPABASE environment variables.'
     );
   }
 
