@@ -297,7 +297,8 @@ async function runRoverSync() {
   }
 
   const supabase = createClient(supabaseUrl, supabaseSecretKey, {
-    auth: { persistSession: false }
+    auth: { persistSession: false },
+    realtime: { enabled: false }
   });
 
   console.log('Collecting Rover MRE URLs...');
