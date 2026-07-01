@@ -1,0 +1,12 @@
+{
+  "name": "ha",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "rover-sync": "node scripts/sync-rover-urls.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.56.0",
+    "playwright": "^1.55.0"
+  }
+}
