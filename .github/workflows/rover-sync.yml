@@ -1,9 +1,14 @@
-name: Rover Sync
+name: Rover Sync Cron
 
 on:
   schedule:
     - cron: '37 1 * * *'
   workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Optional note for a manual run'
+        required: false
+        default: 'manual trigger'
 
 jobs:
   sync:
